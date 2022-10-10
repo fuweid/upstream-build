@@ -1,0 +1,64 @@
+name: etcd-3.5.x
+
+on:
+  workflow_dispatch:
+    inputs:
+      go_version:
+        description: "build by which go version"
+        required: true
+        default: "latest"
+      etcd_version:
+        description: "build with etcd version"
+        required: true
+        default: "release-3.5"
+
+jobs:
+  push:
+    permissions:
+      packages: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Docker login
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull Golang Image
+        run: |
+          set -euo pipefail
+
+          docker pull "golang:${{ github.event.inputs.go_version }}"
+
+      - name: Build ETCD and push
+        run: |
+          set -euo pipefail
+
+          git clone https://github.com/etcd-io/etcd.git
+          cd etcd
+          git checkout "${{ github.event.inputs.etcd_version }}"
+
+          docker run --rm \
+            -v ${PWD}:/etcd-repo \
+            -w /etcd-repo \
+            "golang:${{ github.event.inputs.go_version }}" \
+            make
+
+          sudo cp ./Dockerfile-release.amd64 ./bin/Dockerfile-release.amd64
+
+          export IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/etcd:${{ github.event.inputs.etcd_version }}-go${{ github.event.inputs.go_version }}
+
+          docker build \
+            --tag "${IMAGE_NAME}" \
+            --file ./bin/Dockerfile-release.amd64 \
+            ./bin
+
+          docker run \
+            --rm \
+            "${IMAGE_NAME}" \
+            /bin/sh -c "/usr/local/bin/etcd --version && /usr/local/bin/etcdctl version"
+
+          docker push "${IMAGE_NAME}"
+
+      - name: Docker Logout
+        run: |
+          docker logout ghcr.io
